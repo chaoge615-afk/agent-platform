@@ -103,6 +103,8 @@ async def chat(request: ChatRequest):
     1. 意图分类（structured / semantic / hybrid）
     2. 路由到对应查询节点
     3. 融合结果返回
+
+    支持多轮对话：通过 conversation_id（thread_id）保持上下文
     """
     start = time.time()
 
@@ -113,8 +115,13 @@ async def chat(request: ChatRequest):
         "conversation_id": request.conversation_id,
     }
 
+    # 构建 checkpoint 配置（使用 conversation_id 作为 thread_id）
+    config = {}
+    if request.conversation_id:
+        config = {"configurable": {"thread_id": request.conversation_id}}
+
     try:
-        result = await graph.ainvoke(initial_state)
+        result = await graph.ainvoke(initial_state, config=config)
 
         return ChatResponse(
             answer=result.get("final_answer", "无响应"),
@@ -129,6 +136,28 @@ async def chat(request: ChatRequest):
             processing_time=time.time() - start,
             error=str(e),
         )
+
+
+@app.get("/api/threads")
+async def list_threads():
+    """列出所有对话线程"""
+    from src.agent.checkpoint import get_checkpoint_manager
+
+    mgr = get_checkpoint_manager()
+    threads = mgr.list_threads()
+
+    return {"threads": threads}
+
+
+@app.get("/api/threads/{thread_id}/history")
+async def get_thread_history(thread_id: str):
+    """获取线程的对话历史"""
+    from src.agent.checkpoint import get_checkpoint_manager
+
+    mgr = get_checkpoint_manager()
+    history = mgr.get_thread_history(thread_id)
+
+    return {"thread_id": thread_id, "history": history}
 
 
 @app.get("/api/mcp/tools")

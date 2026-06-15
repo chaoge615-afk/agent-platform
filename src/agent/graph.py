@@ -18,12 +18,13 @@ from src.agent.nodes import (
     query_rag,
     merge_results,
 )
+from src.agent.checkpoint import get_checkpoint_manager
 
 
-def build_agent_graph():
+def build_agent_graph(checkpointer=None):
     """构建 Agent 工作流
 
-    返回编译好的 LangGraph，可以直接 .invoke() 调用。
+    返回编译好的 LangGraph，支持 checkpoint 持久化。
     """
     # 1. 创建 StateGraph
     graph = StateGraph(AgentState)
@@ -58,8 +59,11 @@ def build_agent_graph():
     # merge → END
     graph.add_edge("merge", END)
 
-    # 5. 编译
-    return graph.compile()
+    # 5. 编译（带 checkpoint）
+    if checkpointer is None:
+        checkpointer = get_checkpoint_manager().get_saver()
+
+    return graph.compile(checkpointer=checkpointer)
 
 
 # 全局实例（延迟初始化）
