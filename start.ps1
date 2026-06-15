@@ -23,7 +23,7 @@ $ready = $false
 while ($attempt -lt $maxAttempts -and -not $ready) {
     $attempt++
     try {
-        $response = Invoke-WebRequest -Uri "http://localhost:8001/health" -TimeoutSec 2 -ErrorAction Stop
+        $response = Invoke-WebRequest -Uri "http://localhost:8001/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
         if ($response.StatusCode -eq 200) {
             $ready = $true
             Write-Host "      ✓ Server is ready" -ForegroundColor Green
