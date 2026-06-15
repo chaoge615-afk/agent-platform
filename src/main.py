@@ -19,12 +19,12 @@ async def lifespan(app: FastAPI):
     # 启动：初始化 MCP 连接和记忆系统
     await mcp_manager.get_mcp_manager().connect_all()
     await memory_store.get_memory_store().connect()
-    print("✅ Agent Platform 启动完成")
+    print("[OK] Agent Platform 启动完成")
     yield
     # 关闭：清理资源
     await mcp_manager.get_mcp_manager().close()
     await memory_store.get_memory_store().close()
-    print("👋 Agent Platform 已关闭")
+    print("[BYE] Agent Platform 已关闭")
 
 
 app = FastAPI(
