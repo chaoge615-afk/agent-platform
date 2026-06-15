@@ -111,7 +111,7 @@ async def chat(request: ChatRequest):
     }
 
     try:
-        result = graph.invoke(initial_state)
+        result = await graph.ainvoke(initial_state)
 
         return ChatResponse(
             answer=result.get("final_answer", "无响应"),

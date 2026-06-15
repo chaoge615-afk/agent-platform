@@ -4,12 +4,49 @@
 LangGraph 会自动合并各 Node 的返回值到 State 中。
 """
 import time
+import json
+import httpx
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agent.state import AgentState
 from src.config import Config
+
+
+async def call_llm_direct(messages: list[dict]) -> str:
+    """直接调用 LLM API（绕过 LangChain，完全控制请求头）
+
+    用于需要自定义 X-Api-Key 头的场景。
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "X-Api-Key": Config.ANTHROPIC_API_KEY,
+    }
+
+    # 构建 Anthropic 格式请求
+    payload = {
+        "model": Config.ANTHROPIC_MODEL,
+        "messages": messages,
+        "max_tokens": 1024,
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            f"{Config.ANTHROPIC_BASE_URL}/v1/messages",
+            headers=headers,
+            json=payload,
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        # 找到 type=text 的内容块（跳过 thinking 块）
+        for block in result["content"]:
+            if block.get("type") == "text":
+                return block["text"]
+
+        # 如果没有 text 块，返回第一个块的内容
+        return result["content"][0].get("text", "")
 
 
 def get_llm():
@@ -24,6 +61,7 @@ def get_llm():
             model=Config.ANTHROPIC_MODEL,
             api_key=Config.ANTHROPIC_API_KEY,
             base_url=Config.ANTHROPIC_BASE_URL,
+            default_headers={"X-Api-Key": Config.ANTHROPIC_API_KEY},  # 兼容自定义代理
         )
     else:  # openai
         return ChatOpenAI(
@@ -57,25 +95,33 @@ INTENT_SYSTEM_PROMPT = """你是一个意图分类器。分析用户问题，判
 }"""
 
 
-def classify_intent(state: AgentState) -> dict:
+async def classify_intent(state: AgentState) -> dict:
     """意图分类节点
 
     调用 LLM 分析用户问题，判断路由类型和过滤条件。
+    使用直接 HTTP 调用以支持自定义 X-Api-Key 头。
     """
     start = time.time()
 
-    llm = get_llm()
-
     messages = [
-        SystemMessage(content=INTENT_SYSTEM_PROMPT),
-        HumanMessage(content=state["question"]),
+        {"role": "user", "content": INTENT_SYSTEM_PROMPT + "\n\n用户问题：" + state["question"]},
     ]
 
     try:
-        response = llm.invoke(messages)
+        response_text = await call_llm_direct(messages)
+
+        # 去除 markdown 代码块标记
+        response_text = response_text.strip()
+        if response_text.startswith("```json"):
+            response_text = response_text[7:]
+        if response_text.startswith("```"):
+            response_text = response_text[3:]
+        if response_text.endswith("```"):
+            response_text = response_text[:-3]
+        response_text = response_text.strip()
+
         # 解析 JSON 响应
-        import json
-        result = json.loads(response.content)
+        result = json.loads(response_text)
 
         return {
             "route_type": result.get("route_type", "semantic"),
@@ -86,6 +132,10 @@ def classify_intent(state: AgentState) -> dict:
         # 分类失败，降级到语义查询
         return {
             "route_type": "semantic",
+            "filters": {},
+            "error": f"意图分类失败，降级到语义查询: {str(e)}",
+            "processing_time": time.time() - start,
+        }
             "filters": {},
             "error": f"意图分类失败，降级到语义查询: {str(e)}",
             "processing_time": time.time() - start,
