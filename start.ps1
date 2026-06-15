@@ -1,4 +1,8 @@
 # Agent Platform - Start Script (PowerShell)
+# 设置 UTF-8 编码
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "Agent Platform - Start" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
