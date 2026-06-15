@@ -15,7 +15,7 @@ $process = Start-Process -FilePath "venv\Scripts\python.exe" `
     -RedirectStandardOutput "server_stdout.log" `
     -RedirectStandardError "server_error.log" `
     -PassThru -NoNewWindow
-Write-Host "      ✓ Server starting (PID: $($process.Id))..." -ForegroundColor Green
+Write-Host "      [OK] Server starting (PID: $($process.Id))..." -ForegroundColor Green
 Write-Host ""
 
 # Step 2: Wait for ready
@@ -30,16 +30,16 @@ while ($attempt -lt $maxAttempts -and -not $ready) {
         $response = Invoke-WebRequest -Uri "http://localhost:8001/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
         if ($response.StatusCode -eq 200) {
             $ready = $true
-            Write-Host "      ✓ Server is ready" -ForegroundColor Green
+            Write-Host "      [OK] Server is ready" -ForegroundColor Green
         }
     } catch {
-        Write-Host "      - Waiting... ($attempt/$maxAttempts)" -ForegroundColor Gray
+        Write-Host "      [-] Waiting... ($attempt/$maxAttempts)" -ForegroundColor Gray
         Start-Sleep -Seconds 2
     }
 }
 
 if (-not $ready) {
-    Write-Host "      ✗ Server failed to start within 30 seconds" -ForegroundColor Red
+    Write-Host "      [FAIL] Server failed to start within 30 seconds" -ForegroundColor Red
     Write-Host "      Check server_stdout.log and server_error.log for details" -ForegroundColor Red
     exit 1
 }
@@ -52,13 +52,13 @@ try {
     $health = Invoke-RestMethod -Uri "http://localhost:8001/health"
     $health | ConvertTo-Json
 } catch {
-    Write-Host "      ✗ Failed to get health status" -ForegroundColor Red
+    Write-Host "      [FAIL] Failed to get health status" -ForegroundColor Red
 }
 Write-Host ""
 
 # Summary
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "✓ Start complete!" -ForegroundColor Green
+Write-Host "[OK] Start complete!" -ForegroundColor Green
 Write-Host ""
 Write-Host "Access URLs:" -ForegroundColor Yellow
 Write-Host "  - API Docs:    http://localhost:8001/docs"

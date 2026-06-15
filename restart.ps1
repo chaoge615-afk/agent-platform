@@ -13,9 +13,9 @@ Write-Host "[1/5] Stopping services..." -ForegroundColor Yellow
 $pythonProcesses = Get-Process python -ErrorAction SilentlyContinue
 if ($pythonProcesses) {
     $pythonProcesses | Stop-Process -Force
-    Write-Host "      ✓ Stopped Python processes" -ForegroundColor Green
+    Write-Host "      [OK] Stopped Python processes" -ForegroundColor Green
 } else {
-    Write-Host "      - No running Python processes" -ForegroundColor Gray
+    Write-Host "      [-] No running Python processes" -ForegroundColor Gray
 }
 Write-Host ""
 
@@ -28,7 +28,7 @@ $cachePaths = @(
 foreach ($path in $cachePaths) {
     if (Test-Path $path) {
         Remove-Item -Path $path -Recurse -Force
-        Write-Host "      ✓ Cleared $path" -ForegroundColor Green
+        Write-Host "      [OK] Cleared $path" -ForegroundColor Green
     }
 }
 Write-Host ""
@@ -40,7 +40,7 @@ $process = Start-Process -FilePath "venv\Scripts\python.exe" `
     -RedirectStandardOutput "server_stdout.log" `
     -RedirectStandardError "server_error.log" `
     -PassThru -NoNewWindow
-Write-Host "      ✓ Server starting (PID: $($process.Id))..." -ForegroundColor Green
+Write-Host "      [OK] Server starting (PID: $($process.Id))..." -ForegroundColor Green
 Write-Host ""
 
 # Step 4: Wait for ready
@@ -55,16 +55,16 @@ while ($attempt -lt $maxAttempts -and -not $ready) {
         $response = Invoke-WebRequest -Uri "http://localhost:8001/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
         if ($response.StatusCode -eq 200) {
             $ready = $true
-            Write-Host "      ✓ Server is ready" -ForegroundColor Green
+            Write-Host "      [OK] Server is ready" -ForegroundColor Green
         }
     } catch {
-        Write-Host "      - Waiting... ($attempt/$maxAttempts)" -ForegroundColor Gray
+        Write-Host "      [-] Waiting... ($attempt/$maxAttempts)" -ForegroundColor Gray
         Start-Sleep -Seconds 2
     }
 }
 
 if (-not $ready) {
-    Write-Host "      ✗ Server failed to start within 30 seconds" -ForegroundColor Red
+    Write-Host "      [FAIL] Server failed to start within 30 seconds" -ForegroundColor Red
     Write-Host "      Check server_stdout.log and server_error.log for details" -ForegroundColor Red
     exit 1
 }
@@ -77,13 +77,13 @@ try {
     $health = Invoke-RestMethod -Uri "http://localhost:8001/health"
     $health | ConvertTo-Json
 } catch {
-    Write-Host "      ✗ Failed to get health status" -ForegroundColor Red
+    Write-Host "      [FAIL] Failed to get health status" -ForegroundColor Red
 }
 Write-Host ""
 
 # Summary
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "✓ Restart complete!" -ForegroundColor Green
+Write-Host "[OK] Restart complete!" -ForegroundColor Green
 Write-Host ""
 Write-Host "Access URLs:" -ForegroundColor Yellow
 Write-Host "  - API Docs:    http://localhost:8001/docs"
