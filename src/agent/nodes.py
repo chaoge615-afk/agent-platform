@@ -5,10 +5,32 @@ LangGraph 会自动合并各 Node 的返回值到 State 中。
 """
 import time
 from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agent.state import AgentState
 from src.config import Config
+
+
+def get_llm():
+    """根据配置获取 LLM 实例
+
+    支持两种提供者：
+    - anthropic: Anthropic SDK（兼容 MiniMax 等）
+    - openai: OpenAI SDK（兼容 DeepSeek 等）
+    """
+    if Config.LLM_PROVIDER == "anthropic":
+        return ChatAnthropic(
+            model=Config.ANTHROPIC_MODEL,
+            api_key=Config.ANTHROPIC_API_KEY,
+            base_url=Config.ANTHROPIC_BASE_URL,
+        )
+    else:  # openai
+        return ChatOpenAI(
+            model=Config.OPENAI_MODEL,
+            api_key=Config.OPENAI_API_KEY,
+            base_url=Config.OPENAI_BASE_URL,
+        )
 
 
 # 意图分类 Prompt
@@ -42,11 +64,7 @@ def classify_intent(state: AgentState) -> dict:
     """
     start = time.time()
 
-    llm = ChatAnthropic(
-        model="MiniMax-M2",
-        api_key=Config.ANTHROPIC_API_KEY,
-        base_url="https://api.minimax.chat/anthropic",
-    )
+    llm = get_llm()
 
     messages = [
         SystemMessage(content=INTENT_SYSTEM_PROMPT),
