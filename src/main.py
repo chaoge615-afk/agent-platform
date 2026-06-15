@@ -17,6 +17,9 @@ from src.memory import store as memory_store
 async def lifespan(app: FastAPI):
     """启动/关闭时的资源管理"""
     # 启动：初始化 MCP 连接和记忆系统
+    print(f"[STARTUP] LLM_PROVIDER: {Config.LLM_PROVIDER}")
+    print(f"[STARTUP] ANTHROPIC_BASE_URL: {Config.ANTHROPIC_BASE_URL}")
+    print(f"[STARTUP] ANTHROPIC_API_KEY: {Config.ANTHROPIC_API_KEY[:10]}...")
     await mcp_manager.get_mcp_manager().connect_all()
     await memory_store.get_memory_store().connect()
     print("[OK] Agent Platform 启动完成")

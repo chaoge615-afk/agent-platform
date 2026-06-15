@@ -136,10 +136,6 @@ async def classify_intent(state: AgentState) -> dict:
             "error": f"意图分类失败，降级到语义查询: {str(e)}",
             "processing_time": time.time() - start,
         }
-            "filters": {},
-            "error": f"意图分类失败，降级到语义查询: {str(e)}",
-            "processing_time": time.time() - start,
-        }
 
 
 def route_query(state: AgentState) -> str:
