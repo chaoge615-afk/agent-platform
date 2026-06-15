@@ -23,13 +23,12 @@ class Config:
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
 
     # ==================== MCP Server 地址 ====================
-    BILIBILI_MCP_URL: str = os.getenv("BILIBILI_MCP_URL", "http://localhost:9001")
-    RAG_MCP_URL: str = os.getenv("RAG_MCP_URL", "http://localhost:9002")
-    SQL_MCP_URL: str = os.getenv("SQL_MCP_URL", "http://localhost:9003")
+    BILIBILI_MCP_URL: str = os.getenv("BILIBILI_MCP_URL", "http://localhost:9001/sse")
+    RAG_MCP_URL: str = os.getenv("RAG_MCP_URL", "http://localhost:9002/sse")
+    SQL_MCP_URL: str = os.getenv("SQL_MCP_URL", "http://localhost:9003/sse")
 
     # ==================== 记忆系统 ====================
-    CHROMA_HOST: str = os.getenv("CHROMA_HOST", "localhost")
-    CHROMA_PORT: int = int(os.getenv("CHROMA_PORT", "8001"))
+    CHROMA_DATA_PATH: str = os.getenv("CHROMA_DATA_PATH", "./data/chroma_db")
     MEMORY_COLLECTION: str = os.getenv("MEMORY_COLLECTION", "agent_memory")
 
     # ==================== 服务配置 ====================

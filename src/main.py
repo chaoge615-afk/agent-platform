@@ -1,9 +1,11 @@
 """Agent Platform — FastAPI 入口"""
 import time
+import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -90,7 +92,10 @@ async def health():
     return HealthResponse(
         status="healthy",
         version="0.1.0",
-        mcp_servers={name: url for name, url in mgr.servers.items()},
+        mcp_servers={
+            name: {"url": url, "connected": mgr._connected.get(name, False)}
+            for name, url in mgr.servers.items()
+        },
         memory_ready=mem._client is not None,
     )
 
@@ -100,21 +105,50 @@ async def chat(request: ChatRequest):
     """智能问答
 
     LangGraph Agent 处理用户问题：
-    1. 意图分类（structured / semantic / hybrid）
-    2. 路由到对应查询节点
-    3. 融合结果返回
+    1. 加载对话历史和记忆上下文
+    2. 意图分类（structured / semantic / hybrid）
+    3. 路由到对应查询节点
+    4. 融合结果 + 反思
+    5. 保存对话记录
     """
     start = time.time()
+    conv_id = request.conversation_id or "default"
+    mem = memory_store.get_memory_store()
+
+    # 加载对话历史（短期记忆）
+    history = await mem.get_short_term(conv_id, limit=10)
+
+    # 检索相关反思（长期记忆）
+    memory_context = ""
+    try:
+        reflections = await mem.search_reflections(request.question, top_k=2)
+        if reflections:
+            memory_context = "过往改进洞察：\n" + "\n".join(
+                f"- {r['content']}" for r in reflections
+            )
+    except Exception:
+        pass  # 记忆检索失败不影响主流程
 
     # 调用 LangGraph Agent
     graph = get_agent_graph()
     initial_state = {
         "question": request.question,
-        "conversation_id": request.conversation_id,
+        "conversation_id": conv_id,
+        "messages": history,
+        "memory_context": memory_context,
+    }
+    config = {
+        "configurable": {
+            "thread_id": conv_id
+        }
     }
 
     try:
-        result = await graph.ainvoke(initial_state)
+        result = await graph.ainvoke(initial_state, config=config)
+
+        # 保存本轮对话到短期记忆
+        await mem.save_short_term(conv_id, {"role": "user", "content": request.question})
+        await mem.save_short_term(conv_id, {"role": "assistant", "content": result.get("final_answer", "")})
 
         return ChatResponse(
             answer=result.get("final_answer", "无响应"),
@@ -129,6 +163,100 @@ async def chat(request: ChatRequest):
             processing_time=time.time() - start,
             error=str(e),
         )
+
+
+def _safe_serialize(obj) -> dict:
+    """安全序列化对象为 JSON 兼容的 dict"""
+    if isinstance(obj, dict):
+        return {k: _safe_serialize(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_safe_serialize(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    else:
+        return str(obj)
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """智能问答（SSE 流式输出）
+
+    逐节点推送 LangGraph 执行过程：
+    - event: node_update — 每个节点执行完成后的状态更新
+    - event: error — 执行出错
+    - event: done — 全部完成
+    """
+    conv_id = request.conversation_id or "default"
+    mem = memory_store.get_memory_store()
+
+    # 加载对话历史和记忆上下文
+    history = await mem.get_short_term(conv_id, limit=10)
+    memory_context = ""
+    try:
+        reflections = await mem.search_reflections(request.question, top_k=2)
+        if reflections:
+            memory_context = "过往改进洞察：\n" + "\n".join(
+                f"- {r['content']}" for r in reflections
+            )
+    except Exception:
+        pass
+
+    graph = get_agent_graph()
+    initial_state = {
+        "question": request.question,
+        "conversation_id": conv_id,
+        "messages": history,
+        "memory_context": memory_context,
+    }
+    config = {
+        "configurable": {
+            "thread_id": conv_id
+        }
+    }
+
+    async def event_generator():
+        start = time.time()
+        step = 0
+        final_answer = ""
+        try:
+            async for chunk in graph.astream(
+                initial_state, config, stream_mode="updates"
+            ):
+                step += 1
+                for node_name, updates in chunk.items():
+                    # 记录最终回答用于保存
+                    if node_name == "merge" and "final_answer" in updates:
+                        final_answer = updates["final_answer"]
+                    event_data = {
+                        "node": node_name,
+                        "step": step,
+                        "updates": _safe_serialize(updates),
+                    }
+                    yield f"event: node_update\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+
+        # 保存本轮对话到短期记忆
+        await mem.save_short_term(conv_id, {"role": "user", "content": request.question})
+        if final_answer:
+            await mem.save_short_term(conv_id, {"role": "assistant", "content": final_answer})
+
+        # 最终完成事件
+        elapsed = time.time() - start
+        done_data = {
+            "processing_time": round(elapsed, 2),
+            "conversation_id": conv_id,
+        }
+        yield f"event: done\ndata: {json.dumps(done_data, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/mcp/tools")
@@ -147,12 +275,7 @@ async def list_mcp_tools():
 async def memory_stats():
     """记忆系统统计"""
     mem = memory_store.get_memory_store()
-
-    return {
-        "short_term_count": 0,  # TODO: 实现统计
-        "long_term_count": 0,
-        "reflection_count": 0,
-    }
+    return await mem.get_stats()
 
 
 # ==================== 启动 ====================

@@ -70,22 +70,26 @@ agent-platform/
 
 ## 开发计划
 
-### Phase 12: LangGraph 重构（第 1-2 周）
-- [ ] LangGraph 核心概念学习（State、Node、Edge）
-- [ ] 实现意图分类节点
-- [ ] 实现条件路由
-- [ ] 流式输出（SSE）
-- [ ] Checkpoint 持久化
+### Phase 12: LangGraph 重构 ✅
+- [x] LangGraph 核心概念（State、Node、Edge）
+- [x] 实现意图分类节点（LLM 调用）
+- [x] 实现条件路由（structured / semantic / hybrid）
+- [x] 流式输出（SSE — `POST /api/chat/stream`）
+- [x] Checkpoint 持久化（MemorySaver 多轮对话）
 
-### Phase 13: MCP 集成（第 3-4 周）
-- [ ] MCP Client 实现
-- [ ] 连接 content-analysis-system 的 MCP Server
-- [ ] 工具发现与注册
+### Phase 13: MCP 集成 ✅
+- [x] MCP Client 实现（SSE 传输，AsyncExitStack 连接管理）
+- [x] 连接 content-analysis-system 的 MCP Server
+- [x] 工具发现与注册（动态发现工具名）
+- [x] query_sql / query_rag 接入 MCP 调用
+- [x] hybrid 并行路由（asyncio.gather）
+- [x] LLM 结果融合（merge_results）
+- [x] MCP 离线优雅降级
 
-### Phase 14: 记忆系统（第 5-6 周）
-- [ ] 短期记忆（对话上下文）
-- [ ] 长期记忆（ChromaDB）
-- [ ] 反思机制
+### Phase 14: 记忆系统 ✅
+- [x] 短期记忆（对话上下文 — 内存字典 + LangGraph Checkpoint）
+- [x] 长期记忆（ChromaDB 嵌入式向量存储）
+- [x] 反思机制（reflect 节点 + ChromaDB 存储/检索）
 
 ## 与 content-analysis-system 的关系
 

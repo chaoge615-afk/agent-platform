@@ -9,6 +9,7 @@
         → go_both → query_sql + query_rag → merge_results → END
 """
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
 
 from src.agent.state import AgentState
 from src.agent.nodes import (
@@ -16,14 +17,21 @@ from src.agent.nodes import (
     route_query,
     query_sql,
     query_rag,
+    query_both,
     merge_results,
+    reflect,
 )
+
+
+# 全局 Checkpointer（支持多轮对话状态持久化）
+_checkpointer = MemorySaver()
 
 
 def build_agent_graph():
     """构建 Agent 工作流
 
     返回编译好的 LangGraph，可以直接 .invoke() 调用。
+    使用 MemorySaver 作为 checkpointer，支持多轮对话。
     """
     # 1. 创建 StateGraph
     graph = StateGraph(AgentState)
@@ -32,7 +40,9 @@ def build_agent_graph():
     graph.add_node("classify", classify_intent)
     graph.add_node("query_sql", query_sql)
     graph.add_node("query_rag", query_rag)
+    graph.add_node("query_both", query_both)
     graph.add_node("merge", merge_results)
+    graph.add_node("reflect", reflect)
 
     # 3. 设置入口
     graph.set_entry_point("classify")
@@ -45,7 +55,7 @@ def build_agent_graph():
         {
             "go_sql": "query_sql",
             "go_rag": "query_rag",
-            "go_both": "query_sql",  # hybrid 先走 SQL，后面并行 RAG
+            "go_both": "query_both",  # hybrid 并行执行 SQL + RAG
         },
     )
 
@@ -55,11 +65,15 @@ def build_agent_graph():
     # query_rag → merge
     graph.add_edge("query_rag", "merge")
 
-    # merge → END
-    graph.add_edge("merge", END)
+    # query_both → merge
+    graph.add_edge("query_both", "merge")
 
-    # 5. 编译
-    return graph.compile()
+    # merge → reflect → END
+    graph.add_edge("merge", "reflect")
+    graph.add_edge("reflect", END)
+
+    # 5. 编译（带 checkpointer 支持多轮对话）
+    return graph.compile(checkpointer=_checkpointer)
 
 
 # 全局实例（延迟初始化）

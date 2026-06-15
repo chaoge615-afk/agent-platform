@@ -4,11 +4,14 @@
 通用 Agent 开发平台 — LangGraph 工作流 + MCP 协议 + 记忆系统，通过 MCP 调用 content-analysis-system 的能力
 
 ## 当前状态（2026-06-15）
-- Phase 12: LangGraph 重构（进行中）
-  - [x] 项目骨架搭建
-  - [ ] LangGraph 核心实现
-  - [ ] 流式输出
-  - [ ] Checkpoint 持久化
+- Phase 12-14: 全部完成 ✅
+  - [x] LangGraph 核心实现（State、Node、Edge、条件路由）
+  - [x] 流式输出（SSE）+ Checkpoint 持久化
+  - [x] MCP Client（SSE 传输，优雅降级）
+  - [x] 记忆系统（短期 + ChromaDB 长期 + 反思）
+  - [x] MCP Server 包装层（content-analysis-system 侧，全链路打通）
+  - [ ] 联调 content-analysis-system Docker 环境（待部署）
+  - [ ] LangSmith 可观测性
 
 ## 技术栈
 - Python 3.11+
