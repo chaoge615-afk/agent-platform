@@ -33,8 +33,8 @@ Write-Host ""
 Write-Host "[3/5] Starting server..." -ForegroundColor Yellow
 $process = Start-Process -FilePath "venv\Scripts\python.exe" `
     -ArgumentList "-m", "src.main" `
-    -RedirectStandardOutput "server.log" `
-    -RedirectStandardError "server.log" `
+    -RedirectStandardOutput "server_stdout.log" `
+    -RedirectStandardError "server_error.log" `
     -PassThru -NoNewWindow
 Write-Host "      ✓ Server starting (PID: $($process.Id))..." -ForegroundColor Green
 Write-Host ""
@@ -61,7 +61,7 @@ while ($attempt -lt $maxAttempts -and -not $ready) {
 
 if (-not $ready) {
     Write-Host "      ✗ Server failed to start within 30 seconds" -ForegroundColor Red
-    Write-Host "      Check server.log for details" -ForegroundColor Red
+    Write-Host "      Check server_stdout.log and server_error.log for details" -ForegroundColor Red
     exit 1
 }
 Write-Host ""
