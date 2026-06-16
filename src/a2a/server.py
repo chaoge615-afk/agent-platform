@@ -12,25 +12,14 @@ from src.a2a.protocol import (
     TaskState,
     Message,
     Artifact,
+    TaskRequest,
+    TaskResponse,
     ROUTER_AGENT_CARD,
 )
 from src.agent import get_agent_graph
 
 
 router = APIRouter(prefix="/a2a", tags=["A2A"])
-
-
-class TaskRequest(BaseModel):
-    """任务请求"""
-    input_data: Dict[str, Any]
-
-
-class TaskResponse(BaseModel):
-    """任务响应"""
-    task_id: str
-    state: str
-    output_data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
 
 
 # 任务存储（内存）
@@ -66,14 +55,20 @@ async def create_task(request: TaskRequest):
             raise ValueError("Missing 'question' in input_data")
 
         graph = get_agent_graph()
+        conversation_id = request.input_data.get("conversation_id", "default")
         initial_state = {
             "question": question,
-            "conversation_id": request.input_data.get("conversation_id", "default"),
+            "conversation_id": conversation_id,
             "messages": [],
             "memory_context": "",
         }
+        config = {
+            "configurable": {
+                "thread_id": conversation_id,
+            }
+        }
 
-        result = await graph.ainvoke(initial_state)
+        result = await graph.ainvoke(initial_state, config=config)
 
         task.state = TaskState.COMPLETED
         task.output_data = {

@@ -79,6 +79,19 @@ class Artifact(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
 
 
+class TaskRequest(BaseModel):
+    """任务请求"""
+    input_data: Dict[str, Any]
+
+
+class TaskResponse(BaseModel):
+    """任务响应"""
+    task_id: str
+    state: str
+    output_data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
 # ==================== Router Agent Card ====================
 
 ROUTER_AGENT_CARD = AgentCard(

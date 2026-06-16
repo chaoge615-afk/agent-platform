@@ -1,0 +1,84 @@
+{
+  "timestamp": "2026-06-16T13:22:46.735772",
+  "summary": {
+    "total_cases": 6,
+    "correct_routes": 5,
+    "errors": 0,
+    "accuracy": "83.33%",
+    "avg_response_time": "15.71s"
+  },
+  "route_accuracy": {
+    "semantic": "2/3 (66.7%)",
+    "hybrid": "3/3 (100.0%)"
+  },
+  "failed_cases": [
+    {
+      "question": "桃姐最近讲了什么情感话题？",
+      "expected": "semantic",
+      "actual": "hybrid",
+      "error": null
+    }
+  ],
+  "detailed_results": [
+    {
+      "question": "桃姐最近讲了什么情感话题？",
+      "expected_route": "semantic",
+      "actual_route": "hybrid",
+      "route_correct": false,
+      "elapsed_time": 11.73,
+      "answer": "MCP Server 'sql' 未连接\n\nMCP Server 'rag' 未连接",
+      "sources": [],
+      "error": null
+    },
+    {
+      "question": "有哪些关于人际关系的建议？",
+      "expected_route": "semantic",
+      "actual_route": "semantic",
+      "route_correct": true,
+      "elapsed_time": 18.51,
+      "answer": "MCP Server 'sql' 未连接\n\nMCP Server 'rag' 未连接",
+      "sources": [],
+      "error": null
+    },
+    {
+      "question": "视频中提到了哪些沟通技巧？",
+      "expected_route": "semantic",
+      "actual_route": "semantic",
+      "route_correct": true,
+      "elapsed_time": 12.97,
+      "answer": "MCP Server 'sql' 未连接\n\nMCP Server 'rag' 未连接",
+      "sources": [],
+      "error": null
+    },
+    {
+      "question": "桃姐播放量最高的视频讲了什么？",
+      "expected_route": "hybrid",
+      "actual_route": "hybrid",
+      "route_correct": true,
+      "elapsed_time": 14.57,
+      "answer": "MCP Server 'sql' 未连接\n\nMCP Server 'rag' 未连接",
+      "sources": [],
+      "error": null
+    },
+    {
+      "question": "情感类视频的平均播放量是多少？这些视频主要讨论什么话题？",
+      "expected_route": "hybrid",
+      "actual_route": "hybrid",
+      "route_correct": true,
+      "elapsed_time": 21.37,
+      "answer": "MCP Server 'sql' 未连接\n\nMCP Server 'rag' 未连接",
+      "sources": [],
+      "error": null
+    },
+    {
+      "question": "最近一周发布的视频中，有哪些关于职场的内容？",
+      "expected_route": "hybrid",
+      "actual_route": "hybrid",
+      "route_correct": true,
+      "elapsed_time": 15.1,
+      "answer": "MCP Server 'sql' 未连接\n\nMCP Server 'rag' 未连接",
+      "sources": [],
+      "error": null
+    }
+  ]
+}
