@@ -109,17 +109,40 @@ async def chat(request: ChatRequest):
     """智能问答
 
     LangGraph Agent 处理用户问题：
-    1. 加载对话历史和记忆上下文
-    2. 意图分类（structured / semantic / hybrid）
-    3. 路由到对应查询节点
-    4. 融合结果 + 反思
-    5. 保存对话记录
+    1. 输入安全检查（Guardrails）
+    2. 加载对话历史和记忆上下文
+    3. 意图分类（structured / semantic / hybrid）
+    4. 路由到对应查询节点
+    5. 融合结果 + 输出过滤 + 反思
+    6. 记录审计日志
+    7. 保存对话记录
     """
     start = time.time()
     conv_id = request.conversation_id or "default"
+
+    # 1. 输入安全检查
+    from src.security import check_input, filter_output, log_event
+
+    input_check = check_input(request.question)
+    if not input_check.passed:
+        log_event(
+            thread_id=conv_id,
+            event_type="guardrail",
+            event_data={
+                "action": "input_blocked",
+                "reason": input_check.reason,
+                "severity": input_check.severity,
+            },
+        )
+        return ChatResponse(
+            answer=f"抱歉，{input_check.reason}。请修改后重试。",
+            processing_time=time.time() - start,
+            error=input_check.reason,
+        )
+
     mem = memory_store.get_memory_store()
 
-    # 加载对话历史（短期记忆）
+    # 2. 加载对话历史（短期记忆）
     history = await mem.get_short_term(conv_id, limit=10)
 
     # 检索相关反思（长期记忆）
@@ -133,7 +156,14 @@ async def chat(request: ChatRequest):
     except Exception:
         pass  # 记忆检索失败不影响主流程
 
-    # 调用 LangGraph Agent
+    # 3. 记录路由审计日志
+    log_event(
+        thread_id=conv_id,
+        event_type="chat_request",
+        event_data={"question": request.question[:200]},
+    )
+
+    # 4. 调用 LangGraph Agent
     graph = get_agent_graph()
     initial_state = {
         "question": request.question,
@@ -149,19 +179,43 @@ async def chat(request: ChatRequest):
 
     try:
         result = await graph.ainvoke(initial_state, config=config)
+        final_answer = result.get("final_answer", "无响应")
 
-        # 保存本轮对话到短期记忆
+        # 5. 输出过滤（PII 脱敏）
+        output_check = filter_output(final_answer)
+        if output_check.modified_output:
+            final_answer = output_check.modified_output
+
+        # 6. 记录审计日志
+        log_event(
+            thread_id=conv_id,
+            event_type="answer",
+            event_data={
+                "route_type": result.get("route_type"),
+                "answer_preview": final_answer[:200],
+                "sources_count": len(result.get("sources", [])),
+            },
+            duration_ms=(time.time() - start) * 1000,
+        )
+
+        # 7. 保存本轮对话到短期记忆
         await mem.save_short_term(conv_id, {"role": "user", "content": request.question})
-        await mem.save_short_term(conv_id, {"role": "assistant", "content": result.get("final_answer", "")})
+        await mem.save_short_term(conv_id, {"role": "assistant", "content": final_answer})
 
         return ChatResponse(
-            answer=result.get("final_answer", "无响应"),
+            answer=final_answer,
             route_type=result.get("route_type"),
             sources=result.get("sources", []),
             processing_time=time.time() - start,
             error=result.get("error"),
         )
     except Exception as e:
+        log_event(
+            thread_id=conv_id,
+            event_type="error",
+            event_data={"error": str(e), "question": request.question[:200]},
+            duration_ms=(time.time() - start) * 1000,
+        )
         return ChatResponse(
             answer=f"处理失败: {str(e)}",
             processing_time=time.time() - start,
@@ -191,6 +245,31 @@ async def chat_stream(request: ChatRequest):
     - event: done — 全部完成
     """
     conv_id = request.conversation_id or "default"
+
+    # 输入安全检查
+    from src.security import check_input, filter_output, log_event
+
+    input_check = check_input(request.question)
+    if not input_check.passed:
+        async def blocked_generator():
+            log_event(
+                thread_id=conv_id,
+                event_type="guardrail",
+                event_data={"action": "input_blocked", "reason": input_check.reason},
+            )
+            error_data = {
+                "error": input_check.reason,
+                "answer": f"抱歉，{input_check.reason}。请修改后重试。",
+            }
+            yield f"event: error\ndata: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+            yield f"event: done\ndata: {json.dumps({'processing_time': 0, 'conversation_id': conv_id}, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            blocked_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     mem = memory_store.get_memory_store()
 
     # 加载对话历史和记忆上下文
@@ -230,6 +309,10 @@ async def chat_stream(request: ChatRequest):
                 for node_name, updates in chunk.items():
                     # 记录最终回答用于保存
                     if node_name == "merge" and "final_answer" in updates:
+                        raw_answer = updates["final_answer"]
+                        # 输出过滤（PII 脱敏）
+                        output_check = filter_output(raw_answer)
+                        updates["final_answer"] = output_check.modified_output or raw_answer
                         final_answer = updates["final_answer"]
                     event_data = {
                         "node": node_name,
@@ -245,8 +328,19 @@ async def chat_stream(request: ChatRequest):
         if final_answer:
             await mem.save_short_term(conv_id, {"role": "assistant", "content": final_answer})
 
-        # 最终完成事件
+        # 记录审计日志
         elapsed = time.time() - start
+        log_event(
+            thread_id=conv_id,
+            event_type="answer",
+            event_data={
+                "mode": "stream",
+                "answer_preview": final_answer[:200] if final_answer else "",
+            },
+            duration_ms=elapsed * 1000,
+        )
+
+        # 最终完成事件
         done_data = {
             "processing_time": round(elapsed, 2),
             "conversation_id": conv_id,

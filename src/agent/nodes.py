@@ -148,13 +148,22 @@ def _extract_text_from_mcp(result: dict) -> str:
 INTENT_SYSTEM_PROMPT = """你是一个意图分类器。分析用户问题，判断应该使用哪种查询方式。
 
 分类规则：
-- structured: 需要结构化数据查询（统计、计数、排名、时间范围、特定UP主的视频数量等）
-- semantic: 需要语义检索（观点、建议、看法、经验分享、情感话题等）
-- hybrid: 同时需要结构化和语义（例如"桃姐最近聊了什么情感话题"）
+- structured: 纯结构化数据查询（统计、计数、排名、时间范围筛选、列表查询等）
+  例："有多少个UP主？"、"播放量最高的视频"、"最近一周新增的视频"
+- semantic: 纯语义检索（观点、建议、看法、经验分享、情感话题、沟通技巧等）
+  例："如何维持长期关系？"、"有哪些关于人际关系的建议？"、"桃姐对爱情怎么看？"
+- hybrid: 同时需要两种数据（用具体数字+观点来回答的问题）
+  例："情感类视频的平均播放量是多少？这些视频主要讨论什么话题？"、"桃姐播放量最高的视频讲了什么？"
+
+关键判断逻辑：
+1. 如果问题只问"是什么观点/看法/建议" → semantic
+2. 如果问题只问"多少/排名/列表" → structured
+3. 如果问题同时需要数字和观点 → hybrid
+4. 提到特定UP主不等于hybrid，要看问的是什么
 
 同时提取过滤条件：
 - up_name: UP主名称（如有）
-- category: 分类（如有，从以下31个分类中选择：恋爱技巧, 婚姻经营, 分手挽回, 暧昧关系, 相亲约会, 情感心理, 两性关系, 家庭关系, 友情社交, 职场人际, 自我成长, 情绪管理, 沟通技巧, 信任建立, 冲突处理, 亲密关系, 情感依赖, 冷暴力, 出轨背叛, 离婚危机, 单身生活, 情感操控, 边界感, 安全感, 依恋类型, 情感成熟, 原生家庭, 性别差异, 情感表达, 关系修复, 情感疗愈）
+- category: 分类（如有）
 - keywords: 关键话题词（列表）
 
 以 JSON 格式返回：
@@ -216,9 +225,30 @@ async def classify_intent(state: AgentState) -> dict:
         # 解析 JSON 响应
         result = json.loads(response_text)
 
+        elapsed_ms = (time.time() - start) * 1000
+        route_type = result.get("route_type", "semantic")
+        filters = result.get("filters", {})
+
+        # 记录审计日志
+        try:
+            from src.security import log_event
+            log_event(
+                thread_id=state.get("conversation_id", "default"),
+                event_type="routing",
+                event_data={
+                    "node": "classify",
+                    "route_type": route_type,
+                    "filters": filters,
+                    "question": state["question"][:100],
+                },
+                duration_ms=elapsed_ms,
+            )
+        except Exception:
+            pass
+
         return {
-            "route_type": result.get("route_type", "semantic"),
-            "filters": result.get("filters", {}),
+            "route_type": route_type,
+            "filters": filters,
             "processing_time": time.time() - start,
         }
     except Exception as e:
@@ -253,6 +283,7 @@ async def query_sql(state: AgentState) -> dict:
     通过 MCP 调用 content-analysis-system 的 SQL MCP Server，
     执行结构化数据查询（Text-to-SQL）。
     """
+    start = time.time()
     question = state["question"]
     filters = state.get("filters") or {}
 
@@ -263,6 +294,23 @@ async def query_sql(state: AgentState) -> dict:
         })
 
         answer_text = _extract_text_from_mcp(result)
+
+        # 记录审计日志
+        try:
+            from src.security import log_event
+            log_event(
+                thread_id=state.get("conversation_id", "default"),
+                event_type="mcp_call",
+                event_data={
+                    "node": "query_sql",
+                    "server": "sql",
+                    "success": not result.get("isError"),
+                    "answer_preview": answer_text[:100],
+                },
+                duration_ms=(time.time() - start) * 1000,
+            )
+        except Exception:
+            pass
 
         return {
             "sql_result": {
@@ -287,12 +335,13 @@ async def query_rag(state: AgentState) -> dict:
     通过 MCP 调用 content-analysis-system 的 RAG MCP Server，
     执行语义检索。
     """
+    start = time.time()
     question = state["question"]
     filters = state.get("filters") or {}
 
     try:
         result = await _call_mcp_tool("rag", {
-            "query": question,
+            "question": question,
             "filters": filters,
             "top_k": 5,
         })
@@ -312,6 +361,23 @@ async def query_rag(state: AgentState) -> dict:
                         sources = parsed["sources"]
                 except (json.JSONDecodeError, TypeError):
                     pass
+
+        # 记录审计日志
+        try:
+            from src.security import log_event
+            log_event(
+                thread_id=state.get("conversation_id", "default"),
+                event_type="mcp_call",
+                event_data={
+                    "node": "query_rag",
+                    "server": "rag",
+                    "success": not result.get("isError"),
+                    "sources_count": len(sources),
+                },
+                duration_ms=(time.time() - start) * 1000,
+            )
+        except Exception:
+            pass
 
         return {
             "rag_result": {
