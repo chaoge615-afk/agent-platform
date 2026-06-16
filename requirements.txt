@@ -7,6 +7,9 @@ langchain-core>=0.3.0
 langchain-anthropic>=0.2.0
 langchain-openai>=0.2.0
 
+# 可观测性
+langsmith>=0.1.0
+
 # MCP Protocol
 mcp>=1.0.0
 

@@ -31,6 +31,12 @@ class Config:
     CHROMA_DATA_PATH: str = os.getenv("CHROMA_DATA_PATH", "./data/chroma_db")
     MEMORY_COLLECTION: str = os.getenv("MEMORY_COLLECTION", "agent_memory")
 
+    # ==================== LangSmith 可观测性 ====================
+    LANGCHAIN_TRACING_V2: bool = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+    LANGCHAIN_API_KEY: str = os.getenv("LANGCHAIN_API_KEY", "")
+    LANGCHAIN_PROJECT: str = os.getenv("LANGCHAIN_PROJECT", "agent-platform")
+    LANGCHAIN_ENDPOINT: str = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
+
     # ==================== 服务配置 ====================
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8001"))

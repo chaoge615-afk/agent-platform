@@ -13,6 +13,7 @@ from src.config import Config
 from src.agent import get_agent_graph
 from src.mcp_client import manager as mcp_manager
 from src.memory import store as memory_store
+from src.a2a.server import router as a2a_router
 
 
 @asynccontextmanager
@@ -47,6 +48,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# A2A 协议路由
+app.include_router(a2a_router)
 
 
 # ==================== 数据模型 ====================
@@ -276,6 +280,50 @@ async def memory_stats():
     """记忆系统统计"""
     mem = memory_store.get_memory_store()
     return await mem.get_stats()
+
+
+# ==================== 审计日志 ====================
+
+@app.get("/api/audit/stats")
+async def audit_stats():
+    """审计日志统计"""
+    from src.security import audit_logger
+    return audit_logger.get_stats()
+
+
+@app.get("/api/audit/logs")
+async def audit_logs(
+    thread_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = 100,
+):
+    """查询审计日志"""
+    from src.security import audit_logger
+
+    logs = audit_logger.query(
+        thread_id=thread_id,
+        event_type=event_type,
+        limit=limit,
+    )
+
+    return {
+        "count": len(logs),
+        "logs": [log.dict() for log in logs],
+    }
+
+
+@app.get("/api/audit/logs/{thread_id}")
+async def audit_logs_by_thread(thread_id: str, limit: int = 100):
+    """按线程查询审计日志"""
+    from src.security import audit_logger
+
+    logs = audit_logger.query(thread_id=thread_id, limit=limit)
+
+    return {
+        "thread_id": thread_id,
+        "count": len(logs),
+        "logs": [log.dict() for log in logs],
+    }
 
 
 # ==================== 启动 ====================
