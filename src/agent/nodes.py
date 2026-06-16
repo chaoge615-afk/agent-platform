@@ -2,7 +2,16 @@
 
 每个 Node 是一个函数：接收 State，返回 State 的部分更新。
 LangGraph 会自动合并各 Node 的返回值到 State 中。
+
+节点列表：
+- classify_intent: 意图分类（LLM）
+- route_query: 条件路由
+- query_sql: 结构化查询（MCP → SQL Server）
+- query_rag: 语义检索（MCP → RAG Server）
+- query_both: 混合查询（并行 SQL + RAG）
+- merge_results: 结果融合（LLM）
 """
+import asyncio
 import time
 import json
 import httpx
@@ -12,6 +21,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agent.state import AgentState
 from src.config import Config
+
+
+# ==================== LLM 调用工具 ====================
 
 
 async def call_llm_direct(messages: list[dict]) -> str:
@@ -71,6 +83,67 @@ def get_llm():
         )
 
 
+# ==================== MCP 调用辅助 ====================
+
+
+async def _call_mcp_tool(server_name: str, arguments: dict) -> dict:
+    """通过 MCP 调用工具（自动发现工具名）
+
+    如果 Server 只有一个工具，自动选择；
+    如果有多个工具，尝试匹配常用名称。
+    """
+    from src.mcp_client.manager import get_mcp_manager
+
+    mgr = get_mcp_manager()
+
+    if not mgr._connected.get(server_name):
+        return {"error": f"MCP Server '{server_name}' 未连接", "isError": True}
+
+    # 发现可用工具
+    tools = await mgr.list_tools(server_name)
+    if not tools:
+        return {"error": f"MCP Server '{server_name}' 无可用工具", "isError": True}
+
+    # 自动选择工具：只有一个就直接用，多个则尝试常见名称
+    if len(tools) == 1:
+        tool_name = tools[0]["name"]
+    else:
+        # 尝试匹配常见工具名
+        common_names = ["query", "search", "execute", "text_to_sql", "semantic_search"]
+        tool_name = None
+        for cn in common_names:
+            for t in tools:
+                if cn in t["name"].lower():
+                    tool_name = t["name"]
+                    break
+            if tool_name:
+                break
+        # 都没匹配上，用第一个
+        if not tool_name:
+            tool_name = tools[0]["name"]
+
+    return await mgr.call_tool(server_name, tool_name, arguments)
+
+
+def _extract_text_from_mcp(result: dict) -> str:
+    """从 MCP 调用结果中提取文本内容"""
+    if result.get("isError"):
+        return result.get("error", "MCP 调用出错")
+
+    content = result.get("content", [])
+    text_parts = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text_parts.append(block.get("text", ""))
+        elif isinstance(block, str):
+            text_parts.append(block)
+
+    return "\n".join(text_parts) if text_parts else "无返回内容"
+
+
+# ==================== 节点函数 ====================
+
+
 # 意图分类 Prompt
 INTENT_SYSTEM_PROMPT = """你是一个意图分类器。分析用户问题，判断应该使用哪种查询方式。
 
@@ -103,12 +176,32 @@ async def classify_intent(state: AgentState) -> dict:
     """
     start = time.time()
 
-    messages = [
-        {"role": "user", "content": INTENT_SYSTEM_PROMPT + "\n\n用户问题：" + state["question"]},
+    # 构建 prompt（包含对话历史和反思上下文）
+    prompt_parts = [INTENT_SYSTEM_PROMPT]
+
+    # 注入对话历史（如果有）
+    messages = state.get("messages") or []
+    if messages:
+        recent = messages[-6:]  # 最近 3 轮
+        history = "\n".join(
+            f"{'用户' if m.get('role') == 'user' else '助手'}: {m.get('content', '')}"
+            for m in recent
+        )
+        prompt_parts.append(f"\n对话历史：\n{history}")
+
+    # 注入长期记忆和反思上下文（如果有）
+    memory_context = state.get("memory_context")
+    if memory_context:
+        prompt_parts.append(f"\n相关背景：\n{memory_context}")
+
+    prompt_parts.append(f"\n\n用户问题：{state['question']}")
+
+    messages_payload = [
+        {"role": "user", "content": "\n".join(prompt_parts)},
     ]
 
     try:
-        response_text = await call_llm_direct(messages)
+        response_text = await call_llm_direct(messages_payload)
 
         # 去除 markdown 代码块标记
         response_text = response_text.strip()
@@ -154,56 +247,245 @@ def route_query(state: AgentState) -> str:
         return "go_rag"
 
 
-def query_sql(state: AgentState) -> dict:
+async def query_sql(state: AgentState) -> dict:
     """SQL 查询节点
 
-    TODO: Phase 13 实现 MCP 调用
-    当前为占位实现。
+    通过 MCP 调用 content-analysis-system 的 SQL MCP Server，
+    执行结构化数据查询（Text-to-SQL）。
     """
-    # TODO: 通过 MCP Client 调用 content-analysis-system 的 SQL MCP Server
-    return {
-        "sql_result": {
-            "answer": "SQL 查询功能待实现（Phase 13: MCP 集成）",
-            "data": [],
+    question = state["question"]
+    filters = state.get("filters") or {}
+
+    try:
+        result = await _call_mcp_tool("sql", {
+            "question": question,
+            "filters": filters,
+        })
+
+        answer_text = _extract_text_from_mcp(result)
+
+        return {
+            "sql_result": {
+                "answer": answer_text,
+                "data": result.get("content", []),
+                "error": result.get("error") if result.get("isError") else None,
+            }
         }
-    }
+    except Exception as e:
+        return {
+            "sql_result": {
+                "answer": f"SQL 查询异常: {str(e)}",
+                "data": [],
+                "error": str(e),
+            }
+        }
 
 
-def query_rag(state: AgentState) -> dict:
+async def query_rag(state: AgentState) -> dict:
     """RAG 查询节点
 
-    TODO: Phase 13 实现 MCP 调用
-    当前为占位实现。
+    通过 MCP 调用 content-analysis-system 的 RAG MCP Server，
+    执行语义检索。
     """
-    # TODO: 通过 MCP Client 调用 content-analysis-system 的 RAG MCP Server
-    return {
-        "rag_result": {
-            "answer": "RAG 查询功能待实现（Phase 13: MCP 集成）",
-            "sources": [],
+    question = state["question"]
+    filters = state.get("filters") or {}
+
+    try:
+        result = await _call_mcp_tool("rag", {
+            "query": question,
+            "filters": filters,
+            "top_k": 5,
+        })
+
+        answer_text = _extract_text_from_mcp(result)
+
+        # 尝试从返回内容中提取 sources
+        sources = []
+        content = result.get("content", [])
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text", "")
+                # 如果返回的是 JSON 字符串，尝试解析 sources
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, dict) and "sources" in parsed:
+                        sources = parsed["sources"]
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        return {
+            "rag_result": {
+                "answer": answer_text,
+                "sources": sources,
+                "error": result.get("error") if result.get("isError") else None,
+            }
         }
-    }
+    except Exception as e:
+        return {
+            "rag_result": {
+                "answer": f"RAG 查询异常: {str(e)}",
+                "sources": [],
+                "error": str(e),
+            }
+        }
 
 
-def merge_results(state: AgentState) -> dict:
+async def query_both(state: AgentState) -> dict:
+    """混合查询节点
+
+    并行执行 SQL 查询和 RAG 语义检索，适用于 hybrid 类型的问题。
+    """
+    sql_result, rag_result = await asyncio.gather(
+        query_sql(state),
+        query_rag(state),
+    )
+    return {**sql_result, **rag_result}
+
+
+# 结果融合 Prompt
+MERGE_SYSTEM_PROMPT = """你是一个信息融合专家。将结构化查询结果和语义检索结果融合，
+生成一个连贯、完整的回答。
+
+规则：
+1. 优先使用结构化数据中的具体数字和事实
+2. 用语义检索的内容补充观点、经验和上下文
+3. 如果两部分结果有冲突，指出差异
+4. 回答要简洁、有条理
+5. 如果某一部分查询失败，只基于成功的部分回答
+6. 如果两部分都失败，说明暂时无法获取相关信息"""
+
+
+async def merge_results(state: AgentState) -> dict:
     """结果融合节点
 
     将 SQL 和 RAG 的结果融合为最终回答。
-    TODO: Phase 13 实现 LLM 融合
+    - 只有一方结果时直接返回
+    - 双方都有结果时用 LLM 融合
+    - LLM 失败降级为简单拼接
     """
-    sql_result = state.get("sql_result", {})
-    rag_result = state.get("rag_result", {})
+    sql_result = state.get("sql_result") or {}
+    rag_result = state.get("rag_result") or {}
 
-    # 简单拼接（后续用 LLM 融合）
-    parts = []
-    sources = []
+    has_sql = bool(sql_result and sql_result.get("answer") and "待实现" not in sql_result.get("answer", "") and "不可用" not in sql_result.get("answer", "") and "异常" not in sql_result.get("answer", "") and "未连接" not in sql_result.get("answer", ""))
+    has_rag = bool(rag_result and rag_result.get("answer") and "待实现" not in rag_result.get("answer", "") and "不可用" not in rag_result.get("answer", "") and "异常" not in rag_result.get("answer", "") and "未连接" not in rag_result.get("answer", ""))
 
-    if sql_result:
-        parts.append(f"[结构化查询] {sql_result.get('answer', '')}")
-    if rag_result:
-        parts.append(f"[语义检索] {rag_result.get('answer', '')}")
-        sources = rag_result.get("sources", [])
+    # 只有一方有有效结果 → 直接返回
+    if has_sql and not has_rag:
+        return {
+            "final_answer": sql_result.get("answer", ""),
+            "sources": [],
+        }
+    if has_rag and not has_sql:
+        return {
+            "final_answer": rag_result.get("answer", ""),
+            "sources": rag_result.get("sources", []),
+        }
 
-    return {
-        "final_answer": "\n\n".join(parts) if parts else "暂无结果",
-        "sources": sources,
-    }
+    # 两方都没有有效结果
+    if not has_sql and not has_rag:
+        # 返回原始结果（可能包含错误信息）
+        parts = []
+        if sql_result:
+            parts.append(sql_result.get("answer", ""))
+        if rag_result:
+            parts.append(rag_result.get("answer", ""))
+        return {
+            "final_answer": "\n\n".join(parts) if parts else "暂无结果",
+            "sources": [],
+        }
+
+    # 双方都有有效结果 → LLM 融合
+    context_parts = []
+    if has_sql:
+        context_parts.append(f"[结构化查询结果]\n{sql_result.get('answer', '')}")
+    if has_rag:
+        context_parts.append(f"[语义检索结果]\n{rag_result.get('answer', '')}")
+
+    messages = [
+        {"role": "system", "content": MERGE_SYSTEM_PROMPT},
+        {"role": "user", "content": f"用户问题：{state['question']}\n\n" + "\n\n".join(context_parts)},
+    ]
+
+    try:
+        merged_text = await call_llm_direct(messages)
+        return {
+            "final_answer": merged_text,
+            "sources": rag_result.get("sources", []),
+        }
+    except Exception as e:
+        # LLM 融合失败，降级为简单拼接
+        return {
+            "final_answer": "\n\n".join(context_parts),
+            "sources": rag_result.get("sources", []),
+            "error": f"结果融合失败，使用简单拼接: {str(e)}",
+        }
+
+
+# ==================== 反思节点 ====================
+
+
+# 反思 Prompt
+REFLECT_PROMPT = """你是一个 AI 助手的质量改进模块。分析这次问答，提取可改进的洞察。
+
+回答格式（JSON）：
+{
+    "should_save": true/false,
+    "insight": "一句话总结的洞察或改进点（如果 should_save=true）",
+    "type": "preference|correction|pattern|quality"
+}
+
+判断标准：
+- should_save=true: 用户有明确偏好、纠正了错误、或发现了可复用的模式
+- should_save=false: 普通问答，没有特别值得记录的洞察
+
+如果没有值得记录的洞察，返回 should_save: false。
+只返回 JSON，不要其他文字。"""
+
+
+async def reflect(state: AgentState) -> dict:
+    """反思节点
+
+    分析问答质量，提取改进洞察存入 ChromaDB。
+    反思结果会在未来的 classify_intent 中被检索，注入到分类 prompt 中。
+    非关键路径：反思失败不影响主流程。
+    """
+    from src.memory.store import get_memory_store
+
+    question = state.get("question", "")
+    answer = state.get("final_answer", "")
+
+    # 没有有效回答则跳过反思
+    if not answer or answer == "暂无结果" or "未连接" in answer:
+        return {}
+
+    messages = [
+        {"role": "system", "content": REFLECT_PROMPT},
+        {"role": "user", "content": f"问题：{question}\n回答：{answer[:500]}"},
+    ]
+
+    try:
+        response = await call_llm_direct(messages)
+        response = response.strip()
+        # 去除 markdown 代码块
+        if response.startswith("```json"):
+            response = response[7:]
+        if response.startswith("```"):
+            response = response[3:]
+        if response.endswith("```"):
+            response = response[:-3]
+        response = response.strip()
+
+        result = json.loads(response)
+
+        if result.get("should_save") and result.get("insight"):
+            mem = get_memory_store()
+            await mem.save_reflection({
+                "content": result["insight"],
+                "type": result.get("type", "general"),
+                "question": question,
+            })
+    except Exception:
+        # 反思失败是非关键路径，静默忽略
+        pass
+
+    return {}

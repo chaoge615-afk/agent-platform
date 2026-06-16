@@ -20,6 +20,7 @@ venv/
 *.db
 *.sqlite
 chroma_data/
+data/
 
 # 日志
 *.log

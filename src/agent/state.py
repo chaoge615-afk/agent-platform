@@ -12,6 +12,12 @@ class AgentState(TypedDict):
     question: str                          # 用户问题
     conversation_id: Optional[str]         # 对话 ID（用于记忆）
 
+    # 对话历史（短期记忆）
+    messages: Optional[list]               # [{role: "user"/"assistant", content: "..."}]
+
+    # 长期记忆检索结果
+    memory_context: Optional[str]          # 从 ChromaDB 检索到的相关记忆
+
     # 意图分类结果
     route_type: Optional[Literal["structured", "semantic", "hybrid"]]
     filters: Optional[dict]                # { up_name, category, keywords }
