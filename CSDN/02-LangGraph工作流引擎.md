@@ -19,7 +19,7 @@ Agent 智能路由平台（二）：LangGraph 工作流引擎
     + [1. 分类 Prompt 设计](#1-分类-prompt-设计)
     + [2. 记忆上下文注入](#2-记忆上下文注入)
     + [3. JSON 解析与降级](#3-json-解析与降级)
-+ [四、节点函数：route_query](#四节点函数route_query)
++ [四、条件路由函数：route_query](#四条件路由函数route_query)
 + [五、节点函数：query_sql 与 query_rag](#五节点函数query_sql-与-query_rag)
     + [1. MCP 工具调用](#1-mcp-工具调用)
     + [2. 结果提取](#2-结果提取)
@@ -298,9 +298,9 @@ except Exception as e:
 这个降级策略是基于实际使用频率选的——大多数用户问的都是语义类问题，降级到 semantic 至少能给出有用的回答。
 
 
-## 四、节点函数：route_query
+## 四、条件路由函数：route_query
 
-路由函数是最简单的节点——纯逻辑，不调用 LLM：
+路由函数是最简单的函数——纯逻辑，不调用 LLM。注意它不是节点（没有通过 `add_node` 注册），而是传给 `add_conditional_edges` 的路由判断函数：
 
 ```python
 def route_query(state: AgentState) -> str:
@@ -436,14 +436,18 @@ async def merge_results(state: AgentState) -> dict:
     rag_result = state.get("rag_result") or {}
 
     has_sql = bool(sql_result and sql_result.get("answer")
+        and "待实现" not in sql_result.get("answer", "")
+        and "不可用" not in sql_result.get("answer", "")
         and "异常" not in sql_result.get("answer", "")
         and "未连接" not in sql_result.get("answer", ""))
     has_rag = bool(rag_result and rag_result.get("answer")
+        and "待实现" not in rag_result.get("answer", "")
+        and "不可用" not in rag_result.get("answer", "")
         and "异常" not in rag_result.get("answer", "")
         and "未连接" not in rag_result.get("answer", ""))
 ```
 
-用关键词匹配来判断有效性虽然不够优雅，但对于这个场景完全够用——MCP 返回的错误信息都包含"异常"或"未连接"这样的关键词。
+用关键词匹配来判断有效性虽然不够优雅，但对于这个场景完全够用——MCP 返回的错误信息通常包含"待实现"、"不可用"、"异常"或"未连接"这样的关键词。
 
 ### 2. LLM 融合
 

@@ -240,7 +240,7 @@ async def chat(request: ChatRequest):
 
 ### 1. 为什么选 SSE
 
-同步接口有个问题：LangGraph 跑完 6 个节点可能需要 10-30 秒，前端一直转圈白屏。
+同步接口有个问题：LangGraph 跑完一次请求的节点链路（classify → query → merge → reflect，约 4 个节点）可能需要 10-30 秒，前端一直转圈白屏。
 
 | 对比 | SSE | WebSocket |
 |------|-----|-----------|
@@ -328,21 +328,37 @@ async def chat_stream(request: ChatRequest):
   data: {"processing_time":3.42,"conversation_id":"abc"}
 ```
 
-前端用 `EventSource` 监听：
+前端用 `fetch` + `ReadableStream` 消费（注意：`EventSource` 只支持 GET，而这个接口是 POST，所以要用 fetch）：
 
 ```javascript
-const es = new EventSource('/api/chat/stream');
-es.addEventListener('node_update', (e) => {
-    const {node, step} = JSON.parse(e.data);
-    updateProgressUI(node, step);     // 更新进度
+const resp = await fetch('/api/chat/stream', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({question: '桃姐有几个视频？'}),
 });
-es.addEventListener('error', (e) => showError(JSON.parse(e.data).error));
-es.addEventListener('done', (e) => { showResult(); es.close(); });
+const reader = resp.body.getReader();
+const decoder = new TextDecoder();
+let buffer = '';
+while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+    // 按 \n\n 分割 SSE 事件，解析 event/data 字段
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop();
+    for (const part of parts) {
+        const event = part.match(/event: (.+)/)?.[1];
+        const data = JSON.parse(part.match(/data: (.+)/)?.[1] || '{}');
+        if (event === 'node_update') updateProgressUI(data);
+        if (event === 'error') showError(data.error);
+        if (event === 'done') { showResult(data); return; }
+    }
+}
 ```
 
 `StreamingResponse` 的两个 header 不能少：`Cache-Control: no-cache` 禁止代理缓存事件流，`X-Accel-Buffering: no` 告诉 Nginx 别缓冲响应体。
 
-**输入被拦截时也要走 SSE 格式**——用一个 `blocked_generator()` 推送 `error` + `done` 事件，保证前端 EventSource 处理逻辑统一：
+**输入被拦截时也要走 SSE 格式**——用一个 `blocked_generator()` 推送 `error` + `done` 事件，保证前端 SSE 处理逻辑统一：
 
 ```python
     if not input_check.passed:
@@ -483,7 +499,7 @@ Config 是纯静态类，没有 `__init__`，全是类属性，直接 `Config.LL
 | 三、MCP 工具集成 | SSE 长连接、工具调用协议 | stdio/SSE transport |
 | 四、记忆系统 | 三层记忆、反思闭环 | 短期/长期/反思 |
 | 五、安全与审计 | 输入护栏、PII 脱敏、审计链 | Guardrails + Audit |
-| 六、A2A 协议 | Agent 间通信、任务委托 | JSON-RPC 2.0 |
+| 六、A2A 协议 | Agent 间通信、任务委托 | REST over HTTP |
 | 七、API 设计与流式输出 | FastAPI 生命周期、SSE 推送 | lifespan + astream |
 
 几个我觉得做得比较满意的设计：
