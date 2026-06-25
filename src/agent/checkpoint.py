@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Optional, Any
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 
 class CheckpointManager:
@@ -22,7 +23,7 @@ class CheckpointManager:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
     def get_saver(self) -> SqliteSaver:
-        """获取 SqliteSaver 实例（单例）"""
+        """获取 SqliteSaver 实例（单例，同步）"""
         if self._saver is None:
             # 创建 SQLite 连接
             conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -35,6 +36,10 @@ class CheckpointManager:
             self._saver.setup()
 
         return self._saver
+
+    def get_async_saver(self) -> AsyncSqliteSaver:
+        """获取 AsyncSqliteSaver 实例（用于 async graph.ainvoke）"""
+        return AsyncSqliteSaver.from_conn_string(self.db_path)
 
     def get_thread_config(self, thread_id: str) -> dict:
         """获取线程配置"""

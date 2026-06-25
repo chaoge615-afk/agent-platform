@@ -25,9 +25,24 @@ async def lifespan(app: FastAPI):
     print(f"[STARTUP] ANTHROPIC_API_KEY: {Config.ANTHROPIC_API_KEY[:10]}...")
     await mcp_manager.get_mcp_manager().connect_all()
     await memory_store.get_memory_store().connect()
+
+    # 初始化持久化 Checkpointer（AsyncSqliteSaver）
+    from src.agent.checkpoint import get_checkpoint_manager
+    _checkpointer_cm = get_checkpoint_manager().get_async_saver()
+    checkpointer = await _checkpointer_cm.__aenter__()  # __aenter__ 返回真正的 saver
+    app.state.checkpointer = checkpointer
+    app.state._checkpointer_cm = _checkpointer_cm  # 保存引用以便关闭
+    print("[OK] AsyncSqliteSaver checkpointer 已初始化")
+
+    # 预热 graph（传入持久化 checkpointer）
+    from src.agent.graph import get_agent_graph
+    get_agent_graph(checkpointer=checkpointer)
+    print("[OK] Agent graph 已预热（持久化 checkpointer）")
+
     print("[OK] Agent Platform 启动完成")
     yield
     # 关闭：清理资源
+    await app.state._checkpointer_cm.__aexit__(None, None, None)
     await mcp_manager.get_mcp_manager().close()
     await memory_store.get_memory_store().close()
     print("[BYE] Agent Platform 已关闭")
@@ -125,6 +140,19 @@ async def chat(request: ChatRequest):
 
     input_check = check_input(request.question)
     if not input_check.passed:
+        # 推断触发规则类型
+        reason = input_check.reason or ""
+        if "SQL" in reason:
+            rule_type = "sql_behavior"
+        elif "注入" in reason:
+            rule_type = "injection"
+        elif "银行卡" in reason:
+            rule_type = "bank_card"
+        elif "过长" in reason:
+            rule_type = "length"
+        else:
+            rule_type = "pii"
+
         log_event(
             thread_id=conv_id,
             event_type="guardrail",
@@ -132,6 +160,7 @@ async def chat(request: ChatRequest):
                 "action": "input_blocked",
                 "reason": input_check.reason,
                 "severity": input_check.severity,
+                "rule_type": rule_type,
             },
         )
         return ChatResponse(
@@ -252,10 +281,27 @@ async def chat_stream(request: ChatRequest):
     input_check = check_input(request.question)
     if not input_check.passed:
         async def blocked_generator():
+            reason = input_check.reason or ""
+            if "SQL" in reason:
+                rule_type = "sql_behavior"
+            elif "注入" in reason:
+                rule_type = "injection"
+            elif "银行卡" in reason:
+                rule_type = "bank_card"
+            elif "过长" in reason:
+                rule_type = "length"
+            else:
+                rule_type = "pii"
+
             log_event(
                 thread_id=conv_id,
                 event_type="guardrail",
-                event_data={"action": "input_blocked", "reason": input_check.reason},
+                event_data={
+                    "action": "input_blocked",
+                    "reason": input_check.reason,
+                    "severity": input_check.severity,
+                    "rule_type": rule_type,
+                },
             )
             error_data = {
                 "error": input_check.reason,
@@ -418,6 +464,26 @@ async def audit_logs_by_thread(thread_id: str, limit: int = 100):
         "count": len(logs),
         "logs": [log.dict() for log in logs],
     }
+
+
+# ==================== 对话线程 ====================
+
+@app.get("/api/threads")
+async def list_threads():
+    """列出所有对话线程"""
+    from src.agent.checkpoint import get_checkpoint_manager
+    mgr = get_checkpoint_manager()
+    threads = mgr.list_threads()
+    return {"count": len(threads), "threads": threads}
+
+
+@app.get("/api/threads/{thread_id}/history")
+async def get_thread_history(thread_id: str):
+    """获取线程的对话历史"""
+    from src.agent.checkpoint import get_checkpoint_manager
+    mgr = get_checkpoint_manager()
+    history = mgr.get_thread_history(thread_id)
+    return {"thread_id": thread_id, "count": len(history), "history": history}
 
 
 # ==================== 启动 ====================

@@ -23,15 +23,11 @@ from src.agent.nodes import (
 )
 
 
-# 全局 Checkpointer（支持多轮对话状态持久化）
-_checkpointer = MemorySaver()
-
-
-def build_agent_graph():
+def build_agent_graph(checkpointer=None):
     """构建 Agent 工作流
 
     返回编译好的 LangGraph，可以直接 .invoke() 调用。
-    使用 MemorySaver 作为 checkpointer，支持多轮对话。
+    checkpointer 由 lifespan 传入（AsyncSqliteSaver），降级使用 MemorySaver。
     """
     # 1. 创建 StateGraph
     graph = StateGraph(AgentState)
@@ -72,17 +68,25 @@ def build_agent_graph():
     graph.add_edge("merge", "reflect")
     graph.add_edge("reflect", END)
 
-    # 5. 编译（带 checkpointer 支持多轮对话）
-    return graph.compile(checkpointer=_checkpointer)
+    # 5. 编译（使用传入的 checkpointer，或降级为 MemorySaver）
+    if checkpointer is None:
+        checkpointer = MemorySaver()
+    return graph.compile(checkpointer=checkpointer)
 
 
 # 全局实例（延迟初始化）
 _agent_graph = None
+_graph_checkpointer = None
 
 
-def get_agent_graph():
-    """获取 Agent 工作流实例（单例）"""
-    global _agent_graph
-    if _agent_graph is None:
-        _agent_graph = build_agent_graph()
+def get_agent_graph(checkpointer=None):
+    """获取 Agent 工作流实例（单例）
+
+    首次调用时由 lifespan 传入 checkpointer 并预热。
+    后续调用直接返回缓存的单例。
+    """
+    global _agent_graph, _graph_checkpointer
+    if _agent_graph is None or (checkpointer is not None and _graph_checkpointer is not checkpointer):
+        _agent_graph = build_agent_graph(checkpointer=checkpointer)
+        _graph_checkpointer = checkpointer
     return _agent_graph

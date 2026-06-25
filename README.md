@@ -86,7 +86,7 @@ agent-platform/
 │   │   ├── graph.py        # 工作流定义
 │   │   ├── nodes.py        # 节点函数（意图分类、路由、查询、融合）
 │   │   ├── state.py        # 状态 Schema
-│   │   └── checkpoint.py   # Checkpoint 持久化（SQLite）
+│   │   └── checkpoint.py   # Checkpoint 持久化（AsyncSqliteSaver）
 │   ├── a2a/                # A2A 协议
 │   │   ├── protocol.py     # 协议定义（Agent Card、Task、Message）
 │   │   ├── server.py       # A2A Server（暴露 Agent）
@@ -137,7 +137,7 @@ agent-platform/
 - hybrid 并行路由（asyncio.gather）
 
 **记忆系统**
-- 短期记忆（对话上下文 — 内存字典 + LangGraph Checkpoint）
+- 短期记忆（对话上下文 — AsyncSqliteSaver 持久化 Checkpoint）
 - 长期记忆（ChromaDB 嵌入式向量存储）
 - 反思机制（reflect 节点 + ChromaDB 存储/检索）
 
@@ -151,11 +151,16 @@ agent-platform/
 **安全治理（Phase 17）**
 - Guardrails（输入/输出过滤）
   - 敏感词检测（身份证、银行卡、手机号）
+    - 银行卡：Luhn 校验算法验证（避免误报）
+    - 身份证/手机号：边界约束正则（`\b` 锚点 + 长度校验）
+    - 上下文关键词过滤（减少 PII 误报）
   - Prompt 注入防护
   - 个人信息脱敏
   - 危险 SQL 检测（DELETE/UPDATE/DROP/TRUNCATE）
+  - 行为护栏优先于 PII 检查（拦截层级修正）
 - 审计日志系统（SQLite 持久化）
   - 事件类型：llm_call、mcp_call、hitl、routing、answer
+  - 统一 severity + rule_type 字段（Guardrail 审计事件标准化）
   - 按线程/事件类型查询
   - 统计信息（总数、按类型、按线程、平均耗时）
 
@@ -166,6 +171,7 @@ agent-platform/
 - 性能基准测试（P50/P90/P95/P99）
 
 **LLM API 调用**
+- 双 Provider 分支：`call_llm_direct` 根据 `LLM_PROVIDER` 自动选择 Anthropic 或 OpenAI SDK
 - 支持 Anthropic 兼容接口（Anthropic / MiniMax / 其他）
 - 支持 OpenAI 兼容接口（OpenAI / DeepSeek / MiniMax / 其他）
 - 自定义 X-Api-Key 请求头（适配内网代理）
@@ -269,7 +275,7 @@ curl http://localhost:8001/api/audit/stats
 - [x] 实现意图分类节点（LLM 调用）
 - [x] 实现条件路由（structured / semantic / hybrid）
 - [x] 流式输出（SSE — `POST /api/chat/stream`）
-- [x] Checkpoint 持久化（MemorySaver 多轮对话）
+- [x] Checkpoint 持久化（AsyncSqliteSaver 持久化多轮对话，lifespan 初始化）
 
 ### Phase 13: MCP 集成 ✅
 - [x] MCP Client 实现（SSE 传输，AsyncExitStack 连接管理）
@@ -305,10 +311,14 @@ curl http://localhost:8001/api/audit/stats
 ### Phase 17: 安全治理 ✅
 - [x] Guardrails（输入/输出过滤）
   - 敏感词检测（身份证、银行卡、手机号）
+    - 银行卡 Luhn 校验 + 身份证/手机号边界约束正则
+    - 上下文关键词过滤（减少误报）
   - Prompt 注入防护
   - 个人信息脱敏
   - 危险 SQL 检测（DELETE/UPDATE/DROP/TRUNCATE）
+  - 行为护栏优先于 PII 检查（拦截层级修正）
 - [x] 审计日志系统（SQLite 持久化）
+  - 统一 severity + rule_type 字段（Guardrail 审计事件标准化）
 - [x] 审计 API 端点（stats、logs、by_thread）
 
 ### Phase 18-20: 待完成
@@ -346,6 +356,21 @@ curl http://localhost:8001/api/audit/stats
 4. ✅ **安全治理** — Guardrails + 审计日志
 5. ✅ **可观测性** — LangSmith 集成
 6. ✅ **完整技术栈** — LangGraph + MCP + A2A + 记忆 + 安全
+
+## 修复记录（2026-06-25）
+
+### K-01 ~ K-12 问题修复
+
+| 编号 | 模块 | 修复内容 |
+|------|------|----------|
+| K-01 | `agent/nodes.py` | `call_llm_direct` 支持 OpenAI 格式（双 provider 分支） |
+| K-02 | `main.py` | 注册 `GET /api/threads` 和 `GET /api/threads/{id}/history` 端点 |
+| K-03 | `agent/checkpoint.py` | MemorySaver → AsyncSqliteSaver 持久化 checkpointer（lifespan 初始化） |
+| K-04 | `security/guardrails.py` | PII 正则误报修复（Luhn 校验 + 边界约束 + 上下文关键词） |
+| K-05 | `agent/nodes.py` | SQL 查询链路增强 DEBUG 日志 |
+| K-07 | `security/guardrails.py` | Guardrail 拦截层级修正（行为护栏优先于 PII 检查） |
+| K-09 | `security/audit.py` | Guardrail 审计事件统一 severity + rule_type 字段 |
+| K-12 | `agent/nodes.py` | `classify_intent` Prompt 增加多轮对话上下文继承规则 |
 
 ## 许可证
 

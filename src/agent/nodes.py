@@ -27,38 +27,53 @@ from src.config import Config
 
 
 async def call_llm_direct(messages: list[dict]) -> str:
-    """直接调用 LLM API（绕过 LangChain，完全控制请求头）
+    """直接调用 LLM API，根据 LLM_PROVIDER 自动切换格式
 
-    用于需要自定义 X-Api-Key 头的场景。
+    支持两种提供者：
+    - anthropic: Anthropic /v1/messages 格式（兼容 MiniMax 等）
+    - openai: OpenAI /chat/completions 格式（兼容 DeepSeek 等）
     """
-    headers = {
-        "Content-Type": "application/json",
-        "X-Api-Key": Config.ANTHROPIC_API_KEY,
-    }
-
-    # 构建 Anthropic 格式请求
-    payload = {
-        "model": Config.ANTHROPIC_MODEL,
-        "messages": messages,
-        "max_tokens": 1024,
-    }
+    if Config.LLM_PROVIDER == "openai":
+        # OpenAI 兼容格式
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
+        }
+        payload = {
+            "model": Config.OPENAI_MODEL,
+            "messages": messages,
+            "max_tokens": 1024,
+        }
+        url = f"{Config.OPENAI_BASE_URL}/chat/completions"
+    else:
+        # Anthropic 兼容格式
+        headers = {
+            "Content-Type": "application/json",
+            "X-Api-Key": Config.ANTHROPIC_API_KEY,
+        }
+        payload = {
+            "model": Config.ANTHROPIC_MODEL,
+            "messages": messages,
+            "max_tokens": 1024,
+        }
+        url = f"{Config.ANTHROPIC_BASE_URL}/v1/messages"
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            f"{Config.ANTHROPIC_BASE_URL}/v1/messages",
-            headers=headers,
-            json=payload,
-        )
+        response = await client.post(url, headers=headers, json=payload)
         response.raise_for_status()
         result = response.json()
 
-        # 找到 type=text 的内容块（跳过 thinking 块）
-        for block in result["content"]:
-            if block.get("type") == "text":
-                return block["text"]
-
-        # 如果没有 text 块，返回第一个块的内容
-        return result["content"][0].get("text", "")
+        if Config.LLM_PROVIDER == "openai":
+            # OpenAI 格式: {"choices": [{"message": {"content": "..."}}]}
+            return result["choices"][0]["message"]["content"]
+        else:
+            # Anthropic 格式: {"content": [{"type": "text", "text": "..."}]}
+            # 跳过 thinking 块，只取 text 块
+            for block in result["content"]:
+                if block.get("type") == "text":
+                    return block["text"]
+            # 如果没有 text 块，返回第一个块的内容
+            return result["content"][0].get("text", "")
 
 
 def get_llm():
@@ -122,6 +137,7 @@ async def _call_mcp_tool(server_name: str, arguments: dict) -> dict:
         if not tool_name:
             tool_name = tools[0]["name"]
 
+    print(f"[DEBUG MCP] server={server_name}, tool={tool_name}, args_keys={list(arguments.keys())}")
     return await mgr.call_tool(server_name, tool_name, arguments)
 
 
@@ -174,7 +190,12 @@ INTENT_SYSTEM_PROMPT = """你是一个意图分类器。分析用户问题，判
         "category": "xxx 或 null",
         "keywords": ["词1", "词2"]
     }
-}"""
+}
+
+重要规则（对话上下文继承）：
+- 如果对话历史中用户已经提到了特定UP主或话题，当前问题应继承这些上下文。
+  例：用户先问"桃姐有几个视频"，再问"她最受欢迎的是哪个"，第二个问题的 filters 应继承 up_name="恋爱教头桃姐"。
+- 如果当前问题是追问，filters 应继承上一轮的过滤条件。"""
 
 
 async def classify_intent(state: AgentState) -> dict:
@@ -294,6 +315,10 @@ async def query_sql(state: AgentState) -> dict:
         })
 
         answer_text = _extract_text_from_mcp(result)
+
+        # 调试日志：帮助定位 SQL 链路问题
+        print(f"[DEBUG query_sql] isError={result.get('isError')}, "
+              f"answer_preview={answer_text[:200]}")
 
         # 记录审计日志
         try:

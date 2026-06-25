@@ -3,7 +3,7 @@
 ## 项目概述
 通用 Agent 开发平台 — LangGraph 工作流 + MCP 协议 + A2A 协议 + 记忆系统 + 安全治理，通过 MCP 调用 content-analysis-system 的能力
 
-## 当前状态（2026-06-16）
+## 当前状态（2026-06-25）
 - Phase 12-17: 全部完成 ✅
   - [x] LangGraph 核心实现（State、Node、Edge、条件路由）
   - [x] 流式输出（SSE）+ Checkpoint 持久化
@@ -13,6 +13,7 @@
   - [x] 评估体系（100+ 测试用例，100% 路由准确率）
   - [x] A2A 协议（Agent Card、Task、跨框架协作）
   - [x] 安全治理（Guardrails + 审计日志）
+  - [x] K-01~K-12 问题修复（guardrails Luhn校验、AsyncSqliteSaver、OpenAI双provider、threads端点、Prompt增强）
   - [ ] 联调 content-analysis-system Docker 环境（待部署）
   - [ ] Phase 18-20: 企业平台实战 + Agent 开发平台
 
@@ -140,3 +141,29 @@ agent-platform/
 - ✅ 安全治理（Guardrails + 审计日志）
 - ✅ 可观测性（LangSmith 集成）
 - ✅ 完整技术栈（LangGraph + MCP + A2A + 记忆 + 安全）
+
+## 已知修复（2026-06-25）
+
+### agent-platform
+| 编号 | 修复内容 |
+|------|---------|
+| K-01 | call_llm_direct 支持 OpenAI 格式（双 provider 分支） |
+| K-02 | 注册 GET /api/threads 和 GET /api/threads/{id}/history 端点 |
+| K-03 | MemorySaver → AsyncSqliteSaver 持久化 checkpointer（lifespan 初始化） |
+| K-04 | Guardrail PII 正则误报修复（Luhn 校验 + 边界约束 + 上下文关键词） |
+| K-05 | SQL 查询链路增强 DEBUG 日志 |
+| K-07 | Guardrail 拦截层级修正（行为护栏优先于 PII 检查） |
+| K-09 | Guardrail 审计事件统一 severity + rule_type 字段 |
+| K-12 | classify_intent Prompt 增加多轮对话上下文继承规则 |
+
+### agent-studio
+| 编号 | 修复内容 |
+|------|---------|
+| K-08 | 创建 Agent 模板 data:dict → Pydantic AgentTemplateCreate 模型（修复中文 UTF-8 解析） |
+
+### content-analysis-system
+| 编号 | 修复内容 |
+|------|---------|
+| K-06 | 清理可疑 hacked 表 |
+| K-10 | ChromaDB v1→v2 确认无需修改（SDK 自动处理） |
+| K-11 | text-to-sql 查询质量优化（UP主 LIKE 模糊匹配 + play_count 字段 + 时间 WHERE 过滤） |

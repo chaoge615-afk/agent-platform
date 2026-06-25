@@ -10,6 +10,17 @@ from typing import Optional, Tuple
 from pydantic import BaseModel, Field
 
 
+def _is_luhn_valid(number_str: str) -> bool:
+    """Luhn 算法校验：银行卡号必须通过此校验"""
+    digits = [int(d) for d in number_str]
+    odd_digits = digits[-1::-2]
+    even_digits = digits[-2::-2]
+    total = sum(odd_digits)
+    for d in even_digits:
+        total += sum(divmod(d * 2, 10))
+    return total % 10 == 0
+
+
 class GuardrailResult(BaseModel):
     """Guardrail 检查结果"""
     passed: bool = Field(..., description="是否通过检查")
@@ -24,15 +35,17 @@ class InputGuardrail:
 
     # 敏感词列表
     SENSITIVE_WORDS = [
-        # 个人隐私
-        r"\d{18}",  # 身份证号
-        r"\d{16,19}",  # 银行卡号
-        r"1[3-9]\d{9}",  # 手机号
+        # 个人隐私（使用边界约束避免匹配更长数字串）
+        r"(?<!\d)\d{18}(?!\d)",  # 身份证号（恰好 18 位，前后不是数字）
+        r"(?<!\d)1[3-9]\d{9}(?!\d)",  # 手机号（恰好 11 位，前后不是数字）
         # 密码相关
         r"(?i)(password|密码|口令)",
         # 其他
         r"(?i)(admin|root|administrator)",
     ]
+
+    # 银行卡上下文关键词（Luhn 通过 + 命中任一 → 拦截）
+    BANK_CONTEXT_WORDS = ["银行卡", "卡号", "bank", "credit card", "debit card"]
 
     # Prompt 注入检测
     INJECTION_PATTERNS = [
@@ -53,7 +66,16 @@ class InputGuardrail:
 
     def check(self, user_input: str) -> GuardrailResult:
         """检查输入"""
-        # 检查敏感词
+        # 1. 先检查 SQL 危险操作（行为护栏优先于 PII）
+        sql_safe, sql_reason = behavior_guardrail.check_sql(user_input)
+        if not sql_safe:
+            return GuardrailResult(
+                passed=False,
+                reason=sql_reason,
+                severity="error",
+            )
+
+        # 2. 检查敏感词（身份证、手机号、密码词、管理员词）
         for pattern in self.sensitive_patterns:
             if pattern.search(user_input):
                 return GuardrailResult(
@@ -62,7 +84,22 @@ class InputGuardrail:
                     severity="error",
                 )
 
-        # 检查 Prompt 注入
+        # 3. 银行卡号检测：Luhn 校验 + 上下文关键词
+        bank_numbers = re.findall(r"(?<!\d)\d{16,19}(?!\d)", user_input)
+        for num in bank_numbers:
+            if _is_luhn_valid(num):
+                has_context = any(
+                    kw in user_input.lower()
+                    for kw in self.BANK_CONTEXT_WORDS
+                )
+                if has_context:
+                    return GuardrailResult(
+                        passed=False,
+                        reason="检测到银行卡号，请避免输入金融隐私数据",
+                        severity="error",
+                    )
+
+        # 4. 检查 Prompt 注入
         for pattern in self.injection_patterns:
             if pattern.search(user_input):
                 return GuardrailResult(
@@ -71,7 +108,7 @@ class InputGuardrail:
                     severity="warning",
                 )
 
-        # 长度检查
+        # 5. 长度检查
         if len(user_input) > 10000:
             return GuardrailResult(
                 passed=False,
@@ -85,11 +122,10 @@ class InputGuardrail:
 class OutputGuardrail:
     """输出过滤器"""
 
-    # 个人信息模式
+    # 个人信息模式（银行卡号改用 Luhn 校验，见 filter 方法）
     PII_PATTERNS = [
-        (r"\d{18}", "***"),  # 身份证号
-        (r"\d{16,19}", "***"),  # 银行卡号
-        (r"1[3-9]\d{9}", "***"),  # 手机号
+        (r"(?<!\d)\d{18}(?!\d)", "***"),  # 身份证号（恰好 18 位）
+        (r"(?<!\d)1[3-9]\d{9}(?!\d)", "***"),  # 手机号（恰好 11 位）
         (r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[EMAIL]"),  # 邮箱
     ]
 
@@ -103,7 +139,12 @@ class OutputGuardrail:
         """过滤输出"""
         modified = output
 
-        # 脱敏个人信息
+        # 银行卡脱敏：仅对通过 Luhn 校验的 16-19 位数字脱敏
+        def luhn_replace(match):
+            return "***" if _is_luhn_valid(match.group()) else match.group()
+        modified = re.sub(r"(?<!\d)\d{16,19}(?!\d)", luhn_replace, modified)
+
+        # 其他 PII 脱敏
         for pattern, replacement in self.pii_patterns:
             modified = pattern.sub(replacement, modified)
 
