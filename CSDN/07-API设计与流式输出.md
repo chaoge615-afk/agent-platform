@@ -228,7 +228,7 @@ async def chat(request: ChatRequest):
                             processing_time=time.time() - start, error=result.get("error"))
     except Exception as e:
         log_event(thread_id=conv_id, event_type="error",
-                  event_data={"error": str(e)}, duration_ms=(time.time() - start) * 1000)
+                  event_data={"error": str(e), "question": request.question[:200]}, duration_ms=(time.time() - start) * 1000)
         return ChatResponse(answer=f"处理失败: {str(e)}",
                             processing_time=time.time() - start, error=str(e))
 ```
@@ -363,9 +363,11 @@ while (true) {
 ```python
     if not input_check.passed:
         async def blocked_generator():
-            error_data = {"error": input_check.reason, "answer": f"抱歉，{input_check.reason}。"}
+            log_event(thread_id=conv_id, event_type="guardrail",
+                      event_data={"action": "input_blocked", "reason": input_check.reason})
+            error_data = {"error": input_check.reason, "answer": f"抱歉，{input_check.reason}。请修改后重试。"}
             yield f"event: error\ndata: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-            yield f"event: done\ndata: {json.dumps({'processing_time': 0}, ensure_ascii=False)}\n\n"
+            yield f"event: done\ndata: {json.dumps({'processing_time': 0, 'conversation_id': conv_id}, ensure_ascii=False)}\n\n"
         return StreamingResponse(blocked_generator(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 ```
