@@ -156,6 +156,14 @@ agent-platform/
 | K-09 | Guardrail 审计事件统一 severity + rule_type 字段 |
 | K-12 | classify_intent Prompt 增加多轮对话上下文继承规则 |
 
+### agent-platform（2026-06-26 遗留问题修复第二轮）
+| 编号 | 修复内容 |
+|------|---------|
+| LG-09 | classify_intent INTENT_SYSTEM_PROMPT 收敛 hybrid 规则（须含结构化数字子句）+ 新增轻量后校验。仅改 prompt，不加全局 temperature（实测 temp=0 在该栈无效且污染 merge/反思），根因详见 [遗留问题修复方案.md](../遗留问题修复方案.md) |
+| K-15 | merge_results 改用 `_is_valid_result`（error 字段为主、关键词兜底，补「无可用工具」「服务不可用」），修复误把错误文本当有效答案 |
+| K-16 | MCPManager 重连接入 list_tools 真实故障路径：每 server 独立 AsyncExitStack + asyncio.Lock 双检重连，单请求内自愈，/health 不再误报 connected=true。nodes.py `_call_mcp_tool` not _connected 时先重连 |
+| MS-01 | get_thread_history 改读 writes 表，用 JsonPlusSerializer.loads_typed 解码 channel 值，显式 current_turn 按 turn 聚合，修复 question/route_type/final_answer 回填全空 |
+
 ### agent-studio
 | 编号 | 修复内容 |
 |------|---------|

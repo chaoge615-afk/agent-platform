@@ -372,6 +372,17 @@ curl http://localhost:8001/api/audit/stats
 | K-09 | `security/audit.py` | Guardrail 审计事件统一 severity + rule_type 字段 |
 | K-12 | `agent/nodes.py` | `classify_intent` Prompt 增加多轮对话上下文继承规则 |
 
+## 修复记录（2026-06-26 第二轮·遗留问题）
+
+> 基于 6 组诊断 + 6 组对抗审查（共 12 Agent）的修复方案，方案详见 [遗留问题修复方案.md](../遗留问题修复方案.md)，全部经回归验证通过。
+
+| 编号 | 模块 | 修复内容 | 回归验证 |
+|------|------|----------|----------|
+| LG-09 | `agent/nodes.py` | 多跳分类摇摆：INTENT_SYSTEM_PROMPT 收敛 hybrid 规则（须含结构化数字子句）+ 新增轻量后校验（hybrid 无结构化词则降级 semantic）。**仅改 prompt，不加全局 temperature** | 目标问题 5/5 semantic（原 4/6 hybrid），反向 hybrid 2/2 未误降级 |
+| K-15 | `agent/nodes.py` | merge_results 改 `_is_valid_result`（error 字段为主 + 关键词兜底，补「无可用工具」），修复误把错误文本当有效答案 | 7/7 单测通过 |
+| K-16 | `mcp_client/manager.py` `agent/nodes.py` | MCP 会话失效惰性重连：每 server 独立 AsyncExitStack + asyncio.Lock 双检 + 重连接入 list_tools 故障路径，单请求内自愈，/health 不再误报 connected=true | 重启 mcp-servers 不重启本服务，立即调 semantic 拿到真实检索内容（非「无可用工具」） |
+| MS-01 | `agent/checkpoint.py` | get_thread_history 改读 writes 表，JsonPlusSerializer 解码 channel 值，显式 current_turn 按 turn 聚合，修复 question/route_type/final_answer 回填全空 | ms-test-01 history count=2、question/final_answer 非空 |
+
 ## 许可证
 
 MIT
